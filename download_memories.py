@@ -84,7 +84,7 @@ def download_with_retry(url, timeout=30):
     raise requests.exceptions.RequestException("Max retries exceeded")
 
 
-def download_memory(memory, temp_folder, index, progress_info=None):
+def download_memory(memory, temp_folder, index, progress_info=None, failed_list=None):
     """Download a single memory file and extract from ZIP if needed."""
     url = memory['url']
     date_str = memory['date']
@@ -189,8 +189,18 @@ def download_memory(memory, temp_folder, index, progress_info=None):
 
         return True
     except Exception as e:
+        error_msg = str(e)
         with download_lock:
-            print(f"  [{index}] ✗ Failed: {e}")
+            print(f"  [{index}] ✗ Failed: {error_msg}")
+            if failed_list is not None:
+                failed_list.append({
+                    'index': index,
+                    'date': date_str,
+                    'type': media_type,
+                    'location': memory['location'],
+                    'url': url,
+                    'error': error_msg
+                })
         # Clean up temp file if it exists
         if temp_filepath.exists():
             temp_filepath.unlink()
@@ -223,6 +233,7 @@ def main():
 
     # Progress tracking
     progress_info = {'completed': 0, 'total': len(memories)}
+    failed_downloads = []
     successful = 0
     failed = 0
 
@@ -230,7 +241,7 @@ def main():
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # Submit all download tasks
         future_to_memory = {
-            executor.submit(download_memory, memory, temp_folder, i, progress_info): (i, memory)
+            executor.submit(download_memory, memory, temp_folder, i, progress_info, failed_downloads): (i, memory)
             for i, memory in enumerate(memories, 1)
         }
 
@@ -254,6 +265,18 @@ def main():
     print(f"  Total: {len(memories)}")
     print(f"Files saved to: {temp_folder}")
     print(f"{'='*60}")
+
+    # Print failed downloads if any
+    if failed_downloads:
+        print(f"\n{'='*60}")
+        print(f"FAILED DOWNLOADS ({len(failed_downloads)}):")
+        print(f"{'='*60}\n")
+        for fail in failed_downloads:
+            print(f"[{fail['index']}] {fail['date']} - {fail['type']}")
+            print(f"  Location: {fail['location']}")
+            print(f"  Error: {fail['error']}")
+            print(f"  URL: {fail['url']}")
+            print()
 
 
 if __name__ == '__main__':
