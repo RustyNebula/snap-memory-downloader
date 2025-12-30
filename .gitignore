@@ -1,0 +1,6 @@
+.DS_Store
+*.html
+memories/
+*.zip
+__pycache__/
+*.pyc
