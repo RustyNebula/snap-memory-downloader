@@ -14,6 +14,7 @@ from urllib.parse import urlparse, parse_qs
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import piexif
 
 # Thread-safe counter for progress tracking
 download_lock = threading.Lock()
@@ -82,6 +83,41 @@ def download_with_retry(url, timeout=30):
             time.sleep(backoff)
 
     raise requests.exceptions.RequestException("Max retries exceeded")
+
+def add_metadata_to_file(file):
+    # Add metadata (date, time etc.) to the downloaded file
+    filename = file.stem  # Get filename without extension
+    date_part = filename.split('_')[0]  # Get the date part
+    time_part = filename.split('_')[1] if '_' in filename else '120000'  # Default time if not present
+
+    if len(date_part) == 8 and date_part.isdigit():
+        year = date_part[0:4]
+        month = date_part[4:6]
+        day = date_part[6:8]
+
+        hour = time_part[0:2]
+        minute = time_part[2:4]
+        second = time_part[4:6]
+
+        # Create a timestamp for the specified date and time
+        spec_time = datetime(int(year), int(month), int(day), int(hour), int(minute), int(second)).timestamp()
+        # Prepare EXIF date format
+        exif_date = f"{year}:{month}:{day} {hour}:{minute}:{second}"
+
+        try:
+            # Load existing exif or create new if empty
+            exif_dict = piexif.load(str(file))
+            
+            exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = exif_date
+            exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = exif_date
+            
+            exif_bytes = piexif.dump(exif_dict)
+            piexif.insert(exif_bytes, str(file))
+        except Exception as e:
+            print(f"Could not update EXIF for {file.name}: {e}")
+        
+        # Set the modified and accessed date and time of the file
+        os.utime(file, times=(spec_time, spec_time))
 
 
 def download_memory(memory, temp_folder, index, progress_info=None, failed_list=None):
@@ -206,7 +242,6 @@ def download_memory(memory, temp_folder, index, progress_info=None, failed_list=
             temp_filepath.unlink()
         return False
 
-
 def main():
     # Configuration
     MAX_WORKERS = 28  # Number of parallel downloads (targeting ~30 minutes for 25k memories)
@@ -215,6 +250,10 @@ def main():
     script_dir = Path(__file__).parent
     html_file = script_dir / 'memories_history.html'
     temp_folder = script_dir / 'temp'
+    
+    # On Linux, if you want to save directly to a USB drive 
+    # usb_drive = Path('/media/USERNAME/NAME OF_USB')  # Change USERNAME and NAME OF USB accordingly
+    # temp_folder = usb_drive / 'temp'
 
     # Create temp folder
     temp_folder.mkdir(exist_ok=True)
@@ -277,6 +316,21 @@ def main():
             print(f"  Error: {fail['error']}")
             print(f"  URL: {fail['url']}")
             print()
+    
+    print("Now changing metadata of downloaded files...")
+    # Using multiple workers to add metadata
+    # Download memories in parallel
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = []
+        for file in temp_folder.iterdir():
+            if file.is_file():
+                futures.append(executor.submit(add_metadata_to_file, file))
+        
+        # Wait for all to complete
+        for future in as_completed(futures):
+            pass
+    
+    print("Metadata update complete.")
 
 
 if __name__ == '__main__':
