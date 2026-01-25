@@ -31,6 +31,10 @@ cd snap-memory-downloader
 pip install requests
 ```
 
+```bash
+pip install piexif
+```
+
 ## Running Tests
 
 The project includes comprehensive unit tests to verify functionality:
